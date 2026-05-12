@@ -1,0 +1,40 @@
+#######################################
+# Syntax Coloring Map for XYdraw
+#######################################
+
+#######################################
+# Datatypes (KEYWORD1 = orange)
+#######################################
+
+XYdraw  KEYWORD1
+
+#######################################
+# Methods and Functions (KEYWORD2 = brown/bold)
+#######################################
+
+begin KEYWORD2
+set_refine  KEYWORD2
+line  KEYWORD2
+rectangle KEYWORD2
+circle  KEYWORD2
+ellipse KEYWORD2
+bezier_curve  KEYWORD2
+render_raster KEYWORD2
+threeD_line KEYWORD2
+polygon KEYWORD2
+clear_scenebuffer KEYWORD2
+add_threeD_line_to_scenebuffer  KEYWORD2
+add_polygon_to_scenebuffer  KEYWORD2
+render_scenebuffer  KEYWORD2
+check_collision_with_camera KEYWORD2
+render_left_justified_string KEYWORD2
+render_right_justified_string KEYWORD2
+render_centered_string KEYWORD2
+render_letter KEYWORD2
+
+#######################################
+# Constants (LITERAL1 = teal)
+#######################################
+
+FB_MAX_LINES  LITERAL1
+FB_MAX_POLYGONS LITERAL1
