@@ -343,4 +343,4 @@ Increasing these raises RAM usage slightly (both values are stored as compact `i
 
 ## Author
 
-Nemes Dániel
+Daniel Nemes
