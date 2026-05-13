@@ -47,6 +47,19 @@ XYdraw drives an oscilloscope as a vector display by continuously outputting X/Y
 
 ---
 
+## XYdraw Editor
+
+Designing geometry by writing coordinates by hand is tedious. **XYdraw Editor** is a companion desktop GUI — built in Python/Tkinter — that lets you draw 2D shapes and 3D scenes visually and then export ready-to-paste C++ functions that call the XYdraw API.
+
+- 2D canvas with lines, rectangles, circles, ellipses, Bézier curves, and raster grids
+- 3D editor with an orbit camera, translation/rotation/scale gizmos, and OBJ/STL import
+- Occlusion preview that matches the scene-buffered hidden-line removal exactly
+- One-click export: copies a complete C++ function (static or offset coordinates, Allman or K&R braces) to the clipboard or saves it straight to a `.cpp` / `.ino` file
+
+→ **[github.com/CITROMOSEPER/XYdraw-editor](https://github.com/CITROMOSEPER/XYdraw-editor)**
+
+---
+
 ## Installation
 
 **Via the Arduino IDE Library Manager:** search for `XYdraw` and click Install.
@@ -343,4 +356,4 @@ Increasing these raises RAM usage slightly (both values are stored as compact `i
 
 ## Author
 
-Daniel Nemes
+Nemes Dániel
