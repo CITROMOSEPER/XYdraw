@@ -13,8 +13,8 @@
 // Increase if your scene needs more objects; each entry is very small.
 // FB_MAX_LINES: max 3D line segments in the scenebuffer (12 bytes each)
 // FB_MAX_POLYGONS: max triangular polygon faces  (18 bytes each)
-#define FB_MAX_LINES    64
-#define FB_MAX_POLYGONS 32
+#define FB_MAX_LINES    255
+#define FB_MAX_POLYGONS 255
 
 
 class XYdraw

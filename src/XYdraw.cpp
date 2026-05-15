@@ -456,8 +456,9 @@ void XYdraw::render_scenebuffer(int cam_x,     int cam_y,     int cam_z,
   // ── Projected-triangle storage ─────────────────────────────────────────────
   struct ProjTri
   {
-    float sx[3], sy[3];   // screen-space vertices, centred at 0
-    float Nx, Ny, Nz, D; // camera-space plane: N·P = D
+    float sx[3], sy[3];         // screen-space vertices, centred at 0
+    float Nx, Ny, Nz, D;       // camera-space plane: N·P = D
+    float minx, maxx, miny, maxy; // screen-space AABB for fast pre-reject
   };
   static ProjTri proj_tris[FB_MAX_POLYGONS * 2];
   static int     n_tris;
@@ -472,6 +473,11 @@ void XYdraw::render_scenebuffer(int cam_x,     int cam_y,     int cam_z,
     t.sx[0] = FOCAL * cx0 / cz0;  t.sy[0] = FOCAL * cy0 / cz0;
     t.sx[1] = FOCAL * cx1 / cz1;  t.sy[1] = FOCAL * cy1 / cz1;
     t.sx[2] = FOCAL * cx2 / cz2;  t.sy[2] = FOCAL * cy2 / cz2;
+    // Precompute screen-space AABB for O(1) pre-reject in draw_clipped_segment.
+    t.minx = fminf(t.sx[0], fminf(t.sx[1], t.sx[2]));
+    t.maxx = fmaxf(t.sx[0], fmaxf(t.sx[1], t.sx[2]));
+    t.miny = fminf(t.sy[0], fminf(t.sy[1], t.sy[2]));
+    t.maxy = fmaxf(t.sy[0], fmaxf(t.sy[1], t.sy[2]));
     float v1x = cx1-cx0, v1y = cy1-cy0, v1z = cz1-cz0;
     float v2x = cx2-cx0, v2y = cy2-cy0, v2z = cz2-cz0;
     t.Nx = v1y*v2z - v1z*v2y;
@@ -592,6 +598,12 @@ void XYdraw::render_scenebuffer(int cam_x,     int cam_y,     int cam_z,
 
     float ldx = p_ex - p_sx,  ldy = p_ey - p_sy;
 
+    // ── Screen-space AABB of the clipped line segment (centred coords) ────────
+    // Used as a cheap pre-reject against each triangle's AABB before running
+    // any edge-intersection or point-in-triangle math.
+    float lminx = fminf(csx, cex),  lmaxx = fmaxf(csx, cex);
+    float lminy = fminf(csy, cey),  lmaxy = fmaxf(csy, cey);
+
     // ── Collect t-values where this (screen-clipped) line crosses tri edges ──
     n_t_vals = 0;
     t_vals[n_t_vals++] = t_screen_start;
@@ -600,6 +612,12 @@ void XYdraw::render_scenebuffer(int cam_x,     int cam_y,     int cam_z,
     for (int ti = 0; ti < n_tris; ti++)
     {
       const ProjTri& tri = proj_tris[ti];
+
+      // AABB overlap: if the triangle's screen box doesn't touch the line's
+      // screen box, none of its edges can intersect the line — skip all 3.
+      if (tri.maxx < lminx || tri.minx > lmaxx ||
+          tri.maxy < lminy || tri.miny > lmaxy) continue;
+
       for (int ei = 0; ei < 3; ei++)
       {
         int   en  = (ei + 1) % 3;
@@ -651,6 +669,11 @@ void XYdraw::render_scenebuffer(int cam_x,     int cam_y,     int cam_z,
       for (int ti = 0; ti < n_tris && !occluded; ti++)
       {
         const ProjTri& tri = proj_tris[ti];
+
+        // Point-vs-AABB: if the midpoint is outside the triangle's bounding
+        // box it can't be inside the triangle — skip the winding-number test.
+        if (mid_sx < tri.minx || mid_sx > tri.maxx ||
+            mid_sy < tri.miny || mid_sy > tri.maxy) continue;
 
         // 2-D point-in-triangle (winding-order independent).
         float d0 = (tri.sx[1]-tri.sx[0])*(mid_sy-tri.sy[0])
@@ -1858,4 +1881,3 @@ void XYdraw::render_Z(int x, int y, int size)
   line(x + size * 2, y, x, y - size * 3);
   line(x, y - size * 3, x + size * 2, y - size * 3);
 }
-
