@@ -1153,7 +1153,7 @@ void XYdraw::render_centered_string(String input_string, int x, int y, int size,
 // draws an exclamation mark
 void XYdraw::render_exclamationmark(int x, int y, int size)
 {
-  line(x + size, y, x + size, y - size * 2.0);
+  line(x + size, y, x + size, y - size * 1.8);
   line(x + size, y - size * 2.7, x + size, y - size * 3);
 }
 
@@ -1218,9 +1218,9 @@ void XYdraw::render_closeparenthesis(int x, int y, int size)
 // draws an asterisk
 void XYdraw::render_asterisk(int x, int y, int size)
 {
-  line(x + size * 0.7, y - size * 1, x + size * 1.3, y - size * 1);
-  line(x + size, y - size, x + size * 0.8, y - size * 1.3);
-  line(x + size, y - size, x + size * 1.2, y - size * 1.3);
+  line(x + size * 0.4, y - size * 1, x + size * 1.6, y - size * 1);
+  line(x + size, y - size, x + size * 0.6, y - size * 1.6);
+  line(x + size, y - size, x + size * 1.4, y - size * 1.6);
   line(x + size, y - size * 0.5, x + size, y - size);
 }
 
@@ -1234,7 +1234,7 @@ void XYdraw::render_plus(int x, int y, int size)
 // draws a comma
 void XYdraw::render_comma(int x, int y, int size)
 {
-  line(x + size, y - size * 2, x + size, y - size * 3);
+  line(x + size, y - size * 2.3, x + size, y - size * 3);
 }
 
 // draws a hyphen
@@ -1266,7 +1266,7 @@ void XYdraw::render_colon(int x, int y, int size)
 void XYdraw::render_semicolon(int x, int y, int size)
 {
   line(x + size, y - size * 1, x + size, y - size * 1.5);
-  line(x + size, y - size * 2, x + size, y - size * 3);
+  line(x + size, y - size * 2.3, x + size, y - size * 3);
 }
 
 // draws a less than sign
@@ -1414,10 +1414,10 @@ void XYdraw::render_two(int x, int y, int size)
 // draws the number 3
 void XYdraw::render_three(int x, int y, int size)
 {
-  bezier_curve(x, y - size, x + size * 2 , y - size, x, y + size * 0.2, x + size * 2, y + size * 0.5);
-  line(x + size * 2, y - size, x + size, y - size * 1.5);
-  line(x + size * 2, y - size * 2, x + size, y - size * 1.5);
-  bezier_curve(x, y - size * 2, x + size * 2 , y - size * 2, x, y - size * 3.5, x + size * 2, y - size * 3.5);
+  bezier_curve(x, y - size * 0.5, x + size * 2 , y - size, x, y + size * 0.2, x + size * 2, y + size * 0.5);
+  line(x + size * 2, y - size, x + size * 1.2, y - size * 1.5);
+  line(x + size * 1.2, y - size * 1.5, x + size * 2, y - size * 2);
+  bezier_curve(x, y - size * 2.5, x + size * 2 , y - size * 2, x, y - size * 3.5, x + size * 2, y - size * 3.5);
 }
 
 // draws the number 4
@@ -1425,7 +1425,7 @@ void XYdraw::render_four(int x, int y, int size)
 {
   line(x + size, y, x, y - size * 2);
   line(x, y - size * 2, x + size * 2, y - size * 2);
-  line(x + size, y - size, x + size, y - size * 3);
+  line(x + size * 1.5, y - size, x + size * 1.5, y - size * 3);
 }
 
 // draws the number 5
@@ -1439,9 +1439,9 @@ void XYdraw::render_five(int x, int y, int size)
 // draws the number 6
 void XYdraw::render_six(int x, int y, int size)
 {
-  bezier_curve(x, y - size, x + size * 2 , y - size, x, y + size * 0.2, x + size * 2, y + size * 0.5);
-  line(x, y - size, x, y - size * 2);
-  circle(x + size, y - size * 2, size);
+  bezier_curve(x, y - size, x + size * 2 , y - size * 0.5, x, y + size * 0.2, x + size * 2, y + size * 0.5);
+  line(x, y - size, x, y - size * 2.25);
+  ellipse(x + size, y - size * 2.25, size, size * 0.75);
 }
 
 // draws the number 7
@@ -1449,24 +1449,22 @@ void XYdraw::render_seven(int x, int y, int size)
 {
   line(x, y, x + size * 2, y);
   line(x + size * 2, y, x, y - size * 2);
-  line(x + size * 0.5, y - size * 1.5, x + size * 1.5, y - size * 1.5);
+  line(x, y - size * 1, x + size * 2, y - size * 1);
 }
 
 // draws the number 8
 void XYdraw::render_eight(int x, int y, int size)
 {
-  bezier_curve(x, y - size, x + size * 2 , y - size, x, y + size * 0.2, x + size * 2, y + size * 0.5);
-  line(x, y - size, x + size * 2, y - size * 2);
-  line(x, y - size * 2, x + size * 2, y - size);
-  bezier_curve(x, y - size * 2, x + size * 2 , y - size * 2, x, y - size * 3.5, x + size * 2, y - size * 3.5);
+  ellipse(x + size, y - size * 0.75, size, size * 0.75);
+  ellipse(x + size, y - size * 2.25, size, size * 0.75);
 }
 
 // draws the number 9
 void XYdraw::render_nine(int x, int y, int size)
 {
-  circle(x + size, y - size, size);
-  line(x + size * 2, y - size, x + size * 2, y - size * 2);
-  bezier_curve(x, y - size * 2, x + size * 2 , y - size * 2, x, y - size * 3.5, x + size * 2, y - size * 3.5);
+  ellipse(x + size, y - size * 0.75, size, size * 0.75);
+  line(x + size * 2, y - size * 0.75, x + size * 2, y - size * 2);
+  bezier_curve(x, y - size * 2.5, x + size * 2 , y - size * 2, x, y - size * 3.5, x + size * 2, y - size * 3.5);
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1475,7 +1473,7 @@ void XYdraw::render_nine(int x, int y, int size)
 // draws the letter a
 void XYdraw::render_a(int x, int y, int size)
 {
-  circle(x + size, y - size * 2, size);
+  ellipse(x + size, y - size * 2.5, size, size * 0.5);
   line(x + size * 2, y - size * 3, x + size * 2, y - size * 1.5);
   bezier_curve(x + size * 2, y - size * 1.5, x, y - size * 1.5, x + size * 2, y - size * 0.5, x, y - size * 0.5);
 }
@@ -1490,9 +1488,9 @@ void XYdraw::render_b(int x, int y, int size)
 // draws the letter c
 void XYdraw::render_c(int x, int y, int size)
 {
-  bezier_curve(x + size * 2, y - size * 1.5, x, y - size * 1.5, x + size * 2, y - size * 0.5, x, y - size * 0.5);
+  bezier_curve(x + size * 2, y - size * 1, x, y - size * 1.5, x + size * 2, y - size * 0.5, x, y - size * 0.5);
   line(x, y - size * 1.5, x, y - size * 2);
-  bezier_curve(x, y - size * 2, x + size * 2, y - size * 2, x, y - size * 3, x + size * 2, y - size * 3);
+  bezier_curve(x, y - size * 2, x + size * 2, y - size * 2.5, x, y - size * 3, x + size * 2, y - size * 3);
 }
 
 // draws the letter d
@@ -1508,7 +1506,7 @@ void XYdraw::render_e(int x, int y, int size)
   line(x, y - size * 1.5, x + size * 2, y - size * 1.5);
   bezier_curve(x + size * 2, y - size * 1.5, x, y - size * 1.5, x + size * 2, y - size * 0.5, x, y - size * 0.5);
   line(x, y - size * 1.5, x, y - size * 2);
-  bezier_curve(x, y - size * 2, x + size * 2, y - size * 2, x, y - size * 3, x + size * 2, y - size * 3);
+  bezier_curve(x, y - size * 2, x + size * 2, y - size * 2.5, x, y - size * 3, x + size * 2, y - size * 3);
 }
 
 // draws the letter f
@@ -1522,8 +1520,8 @@ void XYdraw::render_f(int x, int y, int size)
 // draws the letter g
 void XYdraw::render_g(int x, int y, int size)
 {
-  circle(x + size, y - size * 2, size);
-  line(x + size * 2, y - size * 2, x + size * 2, y - size * 3);
+  ellipse(x + size, y - size * 1.5, size, size * 0.5);
+  line(x + size * 2, y - size, x + size * 2, y - size * 3);
   bezier_curve(x + size * 2, y - size * 3, x, y - size * 3, x + size * 2, y - size * 4, x, y - size * 4);
 }
 
@@ -1538,15 +1536,15 @@ void XYdraw::render_h(int x, int y, int size)
 // draws the letter i
 void XYdraw::render_i(int x, int y, int size)
 {
-  line(x + size, y, x + size, y - size * 0.5);
-  line(x + size, y + size, x + size, y - size * 3);
+  line(x + size, y, x + size, y - size * 0.3);
+  line(x + size, y - size * 1.1, x + size, y - size * 3);
 }
 
 // draws the letter j
 void XYdraw::render_j(int x, int y, int size)
 {
-  line(x + size * 2, y, x + size * 2, y - size * 0.5);
-  line(x + size * 2, y + size, x + size * 2, y - size * 3);
+  line(x + size * 2, y, x + size * 2, y - size * 0.3);
+  line(x + size * 2, y - size * 1.1, x + size * 2, y - size * 3);
   bezier_curve(x + size * 2, y - size * 3, x, y - size * 3, x + size * 2, y - size * 4, x, y - size * 4);
 }
 
@@ -1570,8 +1568,8 @@ void XYdraw::render_l(int x, int y, int size)
 void XYdraw::render_m(int x, int y, int size)
 {
   line(x, y - size, x, y - size * 3);
-  bezier_curve(x, y - size * 1.5, x + size, y - size * 1.5, x, y - size, x + size, y - size);
-  bezier_curve(x + size, y - size * 1.5, x + size * 2, y - size * 1.5, x + size, y - size, x + size * 2, y - size);
+  bezier_curve(x, y - size * 1.5, x + size, y - size * 1.7, x, y - size, x + size, y - size);
+  bezier_curve(x + size, y - size * 1.7, x + size * 2, y - size * 1.5, x + size, y - size, x + size * 2, y - size);
   line(x + size * 2, y - size * 1.5, x + size * 2, y - size * 3);
 }
 
@@ -1696,7 +1694,7 @@ void XYdraw::render_C(int x, int y, int size)
 {
   bezier_curve(x + size * 2, y - size, x, y - size, x + size * 2, y, x, y);
   line(x, y - size, x, y - size * 2);
-  bezier_curve(x, y - size * 2, x + size * 2, y - size * 2, x, y - size * 3, x + size * 2, y - size * 3);
+  bezier_curve(x, y - size * 2, x + size * 2, y - size * 2.2, x, y - size * 3, x + size * 2, y - size * 3);
 }
 
 // draws the letter D
@@ -1726,7 +1724,7 @@ void XYdraw::render_F(int x, int y, int size)
 // draws the letter G
 void XYdraw::render_G(int x, int y, int size)
 {
-  bezier_curve(x + size * 2, y - size, x, y - size, x + size * 2, y, x, y);
+  bezier_curve(x + size * 2, y - size * 0.5, x, y - size, x + size * 2, y, x, y);
   line(x, y - size, x, y - size * 2);
   bezier_curve(x, y - size * 2, x + size * 2, y - size * 2, x, y - size * 3, x + size * 2, y - size * 3);
   line(x + size * 2, y - size * 2, x + size * 2, y - size * 1.5);
