@@ -36,7 +36,7 @@ class XYdraw
     void ellipse(int origin_x, int origin_y, int radius_x, int radius_y);
     void bezier_curve(int anchor1_x, int anchor1_y, int anchor2_x, int anchor2_y, 
                       int cp1_x,     int cp1_y,     int cp2_x,     int cp2_y);
-    void render_raster(bool raster[], int x_size, int y_size);
+    void render_raster(bool raster[], unsigned int x_size, unsigned int y_size);
 
     /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // Regular 3D rendering functions
@@ -45,11 +45,18 @@ class XYdraw
                      int end_x,     int end_y,     int end_z, 
                      int cam_x,     int cam_y,     int cam_z, 
                      int cam_x_dir, int cam_y_dir, int cam_z_dir);
+                     
     void polygon(int p1_x,      int p1_y,      int p1_z,
                  int p2_x,      int p2_y,      int p2_z,
                  int p3_x,      int p3_y,      int p3_z,
                  int cam_x,     int cam_y,     int cam_z,
                  int cam_x_dir, int cam_y_dir, int cam_z_dir);
+
+    void render_voxels(bool voxels[], unsigned int x_size, unsigned int y_size, unsigned int z_size,
+                       unsigned int voxel_size,
+                       int x_pos,   int y_pos,   int z_pos,
+                       int cam_x,   int cam_y,   int cam_z,
+                       int cam_x_dir, int cam_y_dir, int cam_z_dir);
 
     /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // Scenebuffered (occlusion) 3D rendering functions
@@ -65,6 +72,11 @@ class XYdraw
     void add_polygon_to_scenebuffer(int p1_x, int p1_y, int p1_z,
                                     int p2_x, int p2_y, int p2_z,
                                     int p3_x, int p3_y, int p3_z);
+
+    // Stage a 3D tensor of voxels for the next render_scenebuffer() call.
+    void add_voxels_to_scenebuffer(bool voxels[], unsigned int x_size, unsigned int y_size, unsigned int z_size,
+                                   unsigned int voxel_size,
+                                   int x_pos, int y_pos, int z_pos);
 
     // Project, cull, clip lines against polygons, and draw everything.
     void render_scenebuffer(int cam_x,     int cam_y,     int cam_z,

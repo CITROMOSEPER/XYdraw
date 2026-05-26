@@ -103,7 +103,7 @@ void XYdraw::ellipse(int origin_x, int origin_y, int radius_x, int radius_y)
 }
 
 // Renders an array in raster format
-void XYdraw::render_raster(bool raster[], int x_size, int y_size)
+void XYdraw::render_raster(bool raster[], unsigned int x_size, unsigned int y_size)
 {
   int temporaryRefine = _refine;
   _refine = 2;
@@ -357,6 +357,60 @@ void XYdraw::threeD_line(int start_x,   int start_y,   int start_z,
        (int)(128.0f + proj_ex), (int)(128.0f + proj_ey));
 }
 
+// Renders a 3D voxel grid using threeD_line (wireframe cubes, no occlusion).
+// Array layout: index = y*(x_size*z_size) + x*z_size + z
+// Each voxel is drawn as a cube's 12 edges.
+void XYdraw::render_voxels(bool voxels[], unsigned int x_size, unsigned int y_size, unsigned int z_size,
+                           unsigned int voxel_size,
+                           int x_pos,   int y_pos,   int z_pos,
+                           int cam_x,   int cam_y,   int cam_z,
+                           int cam_x_dir, int cam_y_dir, int cam_z_dir)
+{
+  int s = (int)voxel_size;
+  unsigned int i = 0;
+
+  for (unsigned int y = 0; y < y_size; y++)
+  {
+    for (unsigned int x = 0; x < x_size; x++)
+    {
+      for (unsigned int z = 0; z < z_size; z++)
+      {
+        if (voxels[i])
+        {
+          int wx = x_pos + (int)(x * voxel_size);
+          int wy = y_pos + (int)(y * voxel_size);
+          int wz = z_pos + (int)(z * voxel_size);
+
+          // Corner naming (for reference):
+          //   c0=(wx,   wy,   wz  )  c1=(wx+s, wy,   wz  )
+          //   c2=(wx+s, wy+s, wz  )  c3=(wx,   wy+s, wz  )
+          //   c4=(wx,   wy,   wz+s)  c5=(wx+s, wy,   wz+s)
+          //   c6=(wx+s, wy+s, wz+s)  c7=(wx,   wy+s, wz+s)
+
+          // Front face (z-plane): c0-c1-c2-c3
+          threeD_line(wx,   wy,   wz,   wx+s, wy,   wz,   cam_x, cam_y, cam_z, cam_x_dir, cam_y_dir, cam_z_dir);
+          threeD_line(wx+s, wy,   wz,   wx+s, wy+s, wz,   cam_x, cam_y, cam_z, cam_x_dir, cam_y_dir, cam_z_dir);
+          threeD_line(wx+s, wy+s, wz,   wx,   wy+s, wz,   cam_x, cam_y, cam_z, cam_x_dir, cam_y_dir, cam_z_dir);
+          threeD_line(wx,   wy+s, wz,   wx,   wy,   wz,   cam_x, cam_y, cam_z, cam_x_dir, cam_y_dir, cam_z_dir);
+
+          // Back face (z+s plane): c4-c5-c6-c7
+          threeD_line(wx,   wy,   wz+s, wx+s, wy,   wz+s, cam_x, cam_y, cam_z, cam_x_dir, cam_y_dir, cam_z_dir);
+          threeD_line(wx+s, wy,   wz+s, wx+s, wy+s, wz+s, cam_x, cam_y, cam_z, cam_x_dir, cam_y_dir, cam_z_dir);
+          threeD_line(wx+s, wy+s, wz+s, wx,   wy+s, wz+s, cam_x, cam_y, cam_z, cam_x_dir, cam_y_dir, cam_z_dir);
+          threeD_line(wx,   wy+s, wz+s, wx,   wy,   wz+s, cam_x, cam_y, cam_z, cam_x_dir, cam_y_dir, cam_z_dir);
+
+          // Four connecting edges: c0-c4, c1-c5, c2-c6, c3-c7
+          threeD_line(wx,   wy,   wz,   wx,   wy,   wz+s, cam_x, cam_y, cam_z, cam_x_dir, cam_y_dir, cam_z_dir);
+          threeD_line(wx+s, wy,   wz,   wx+s, wy,   wz+s, cam_x, cam_y, cam_z, cam_x_dir, cam_y_dir, cam_z_dir);
+          threeD_line(wx+s, wy+s, wz,   wx+s, wy+s, wz+s, cam_x, cam_y, cam_z, cam_x_dir, cam_y_dir, cam_z_dir);
+          threeD_line(wx,   wy+s, wz,   wx,   wy+s, wz+s, cam_x, cam_y, cam_z, cam_x_dir, cam_y_dir, cam_z_dir);
+        }
+        i++;
+      }
+    }
+  }
+}
+
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // scenebuffered (occlusion) 3D rendering functions
 //
@@ -401,6 +455,82 @@ void XYdraw::add_polygon_to_scenebuffer(int p1_x, int p1_y, int p1_z,
   p.p1x = (int16_t)p1_x;  p.p1y = (int16_t)p1_y;  p.p1z = (int16_t)p1_z;
   p.p2x = (int16_t)p2_x;  p.p2y = (int16_t)p2_y;  p.p2z = (int16_t)p2_z;
   p.p3x = (int16_t)p3_x;  p.p3y = (int16_t)p3_y;  p.p3z = (int16_t)p3_z;
+}
+
+// Stages a 3D voxel grid into the scenebuffer using opaque polygons (occlusion-aware).
+// Array layout: index = y*(x_size*z_size) + x*z_size + z
+// Each voxel face is split into 2 triangles (6 faces x 2 = 12 polygons per voxel).
+void XYdraw::add_voxels_to_scenebuffer(bool voxels[], unsigned int x_size, unsigned int y_size, unsigned int z_size,
+                                       unsigned int voxel_size,
+                                       int x_pos, int y_pos, int z_pos)
+{
+  int s = (int)voxel_size;
+  unsigned int i = 0;
+
+  for (unsigned int y = 0; y < y_size; y++)
+  {
+    for (unsigned int x = 0; x < x_size; x++)
+    {
+      for (unsigned int z = 0; z < z_size; z++)
+      {
+        if (voxels[i])
+        {
+          int wx = x_pos + (int)(x * voxel_size);
+          int wy = y_pos + (int)(y * voxel_size);
+          int wz = z_pos + (int)(z * voxel_size);
+
+          // Front face (wz, -Z normal): c0-c1-c2 and c0-c2-c3
+          add_polygon_to_scenebuffer(wx,   wy,   wz,
+                                     wx+s, wy,   wz,
+                                     wx+s, wy+s, wz);
+          add_polygon_to_scenebuffer(wx,   wy,   wz,
+                                     wx+s, wy+s, wz,
+                                     wx,   wy+s, wz);
+
+          // Back face (wz+s, +Z normal): c4-c5-c6 and c4-c6-c7
+          add_polygon_to_scenebuffer(wx,   wy,   wz+s,
+                                     wx+s, wy,   wz+s,
+                                     wx+s, wy+s, wz+s);
+          add_polygon_to_scenebuffer(wx,   wy,   wz+s,
+                                     wx+s, wy+s, wz+s,
+                                     wx,   wy+s, wz+s);
+
+          // Left face (wx, -X normal): c0-c4-c7 and c0-c7-c3
+          add_polygon_to_scenebuffer(wx, wy,   wz,
+                                     wx, wy,   wz+s,
+                                     wx, wy+s, wz+s);
+          add_polygon_to_scenebuffer(wx, wy,   wz,
+                                     wx, wy+s, wz+s,
+                                     wx, wy+s, wz);
+
+          // Right face (wx+s, +X normal): c1-c5-c6 and c1-c6-c2
+          add_polygon_to_scenebuffer(wx+s, wy,   wz,
+                                     wx+s, wy,   wz+s,
+                                     wx+s, wy+s, wz+s);
+          add_polygon_to_scenebuffer(wx+s, wy,   wz,
+                                     wx+s, wy+s, wz+s,
+                                     wx+s, wy+s, wz);
+
+          // Bottom face (wy, -Y normal): c0-c1-c5 and c0-c5-c4
+          add_polygon_to_scenebuffer(wx,   wy, wz,
+                                     wx+s, wy, wz,
+                                     wx+s, wy, wz+s);
+          add_polygon_to_scenebuffer(wx,   wy, wz,
+                                     wx+s, wy, wz+s,
+                                     wx,   wy, wz+s);
+
+          // Top face (wy+s, +Y normal): c3-c2-c6 and c3-c6-c7
+          add_polygon_to_scenebuffer(wx,   wy+s, wz,
+                                     wx+s, wy+s, wz,
+                                     wx+s, wy+s, wz+s);
+          add_polygon_to_scenebuffer(wx,   wy+s, wz,
+                                     wx+s, wy+s, wz+s,
+                                     wx,   wy+s, wz+s);
+        }
+        i++;
+      }
+    }
+  }
 }
 
 void XYdraw::render_scenebuffer(int cam_x,     int cam_y,     int cam_z,
@@ -1448,8 +1578,8 @@ void XYdraw::render_six(int x, int y, int size)
 void XYdraw::render_seven(int x, int y, int size)
 {
   line(x, y, x + size * 2, y);
-  line(x + size * 2, y, x, y - size * 2);
-  line(x, y - size * 1, x + size * 2, y - size * 1);
+  line(x + size * 2, y, x, y - size * 3);
+  line(x, y - size * 1.5, x + size * 2, y - size * 1.5);
 }
 
 // draws the number 8
