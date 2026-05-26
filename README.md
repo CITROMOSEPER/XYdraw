@@ -11,6 +11,7 @@ XYdraw drives an oscilloscope as a vector display by continuously outputting X/Y
 - **2D primitives** — lines, rectangles, circles, ellipses, cubic Bézier curves
 - **Raster rendering** — display any pixel grid as a vector image
 - **3D wireframe rendering** — perspective projection with full pitch/yaw/roll camera control
+- **Voxel rendering** — draw 3D boolean voxel grids as wireframe cubes (regular mode) or as occluding solid cubes (scene-buffered mode)
 - **Scene-buffered 3D with occlusion** — hidden-line removal via screen-space occlusion testing against opaque triangle faces
 - **Vector font** — all 95 printable ASCII characters, scalable, with left/right/center justification
 - **Near-plane and screen-space clipping** — Liang–Barsky clipping prevents geometry artifacts at extreme camera angles
@@ -190,6 +191,23 @@ void polygon(int p1_x, int p1_y, int p1_z,
              int cam_x_dir, int cam_y_dir, int cam_z_dir);
 ```
 Draws the three edges of a triangular face as projected 3D lines. This is a convenience wrapper around three `threeD_line` calls and produces no filled face.
+ 
+```cpp
+void render_voxels(bool voxels[],
+                   unsigned int x_size, unsigned int y_size, unsigned int z_size,
+                   unsigned int voxel_size,
+                   int x_pos,   int y_pos,   int z_pos,
+                   int cam_x,   int cam_y,   int cam_z,
+                   int cam_x_dir, int cam_y_dir, int cam_z_dir);
+```
+Renders a 3D boolean voxel grid as wireframe cubes, with no occlusion. Each voxel whose value is `true` is drawn as all 12 edges of an axis-aligned cube.
+ 
+- `voxels[]` — flat array of booleans; index layout is `y*(x_size*z_size) + x*z_size + z`.
+- `x_size`, `y_size`, `z_size` — dimensions of the grid in voxels.
+- `voxel_size` — side length of each voxel cube in world units.
+- `x_pos`, `y_pos`, `z_pos` — world-space position of the grid's (0, 0, 0) corner.
+- Camera parameters follow the same convention as `threeD_line`.
+> **Note:** Because `render_voxels` uses the regular (non-scene-buffered) path, voxels in the interior of a solid object will show through outer faces. Use `add_voxels_to_scenebuffer` + `render_scenebuffer` for solid-looking voxel objects.
 
 **Camera parameters (shared by both functions):**
 
@@ -213,6 +231,7 @@ This mode collects all geometry into a scene buffer, then projects and renders t
 draw.clear_scenebuffer();
 draw.add_threeD_line_to_scenebuffer(...);  // add as many as needed
 draw.add_polygon_to_scenebuffer(...);       // add as many as needed
+draw.add_voxels_to_scenebuffer(...);        // add voxel grids as solid cubes
 draw.render_scenebuffer(cam_x, cam_y, cam_z, pitch, yaw, roll);
 ```
 
@@ -233,6 +252,17 @@ void add_polygon_to_scenebuffer(int p1_x, int p1_y, int p1_z,
                                 int p3_x, int p3_y, int p3_z);
 ```
 Stages an opaque triangular polygon. Polygons occlude both staged lines and each other's edges. Silently ignored if `FB_MAX_POLYGONS` is exceeded.
+ 
+```cpp
+void add_voxels_to_scenebuffer(bool voxels[],
+                               unsigned int x_size, unsigned int y_size, unsigned int z_size,
+                               unsigned int voxel_size,
+                               int x_pos, int y_pos, int z_pos);
+```
+Stages a 3D boolean voxel grid as a set of opaque solid cubes. Each voxel whose value is `true` is decomposed into 6 faces × 2 triangles = 12 polygons and added to the scene buffer, so the cubes will correctly occlude lines and each other when `render_scenebuffer()` is called.
+ 
+- Parameters are identical to `render_voxels` except there are no camera arguments — the camera is supplied later to `render_scenebuffer`.
+- Silently stops adding polygons once `FB_MAX_POLYGONS` is reached.
 
 ```cpp
 void render_scenebuffer(int cam_x,     int cam_y,     int cam_z,
@@ -311,8 +341,8 @@ Renders a single character. `offset` is added to `x` before drawing, allowing yo
 These constants are defined at the top of `XYdraw.h` and can be increased if your scene requires more objects:
 
 ```cpp
-#define FB_MAX_LINES    64   // max 3D line segments  (12 bytes each)
-#define FB_MAX_POLYGONS 32   // max triangular faces  (18 bytes each)
+#define FB_MAX_LINES    255   // max 3D line segments  (12 bytes each)
+#define FB_MAX_POLYGONS 255   // max triangular faces  (18 bytes each)
 ```
 
 Increasing these raises RAM usage slightly (both values are stored as compact `int16_t` structs). The occlusion pass also takes longer with more polygons — each line segment is tested against every projected triangle.
@@ -330,7 +360,9 @@ Increasing these raises RAM usage slightly (both values are stored as compact `i
 | `bezier_curve` | Animated Bézier curves with changing anchors and control points; effect of `refine` |
 | `raster` | Displaying a 10×10 pixel smiley face via a boolean matrix |
 | `regular_3D_rendering` | Wireframe cube with a pyramid roof, camera orbiting in 3D |
+| `render_voxels` | Wireframe voxel grid — a small 3D bitmap rendered as wireframe cubes |
 | `scenebuffered_occlusion_3D_rendering` | Same cube, but solid-faced with hidden-line removal |
+| `add_voxels_to_scenebuffer` | Solid voxel object with full hidden-face removal via the scene buffer |
 | `string_rendering` | Left/right/center justified strings animating letter by letter |
 
 ---
