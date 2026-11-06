@@ -3,38 +3,50 @@
 #######################################
 
 #######################################
-# Datatypes (KEYWORD1 = orange)
+# Datatypes (KEYWORD1)
 #######################################
 
-XYdraw  KEYWORD1
+XYdraw	KEYWORD1
 
 #######################################
-# Methods and Functions (KEYWORD2 = brown/bold)
+# Methods and Functions (KEYWORD2)
 #######################################
 
-begin KEYWORD2
-set_refine  KEYWORD2
-line  KEYWORD2
-rectangle KEYWORD2
-circle  KEYWORD2
-ellipse KEYWORD2
-bezier_curve  KEYWORD2
-render_raster KEYWORD2
-threeD_line KEYWORD2
-polygon KEYWORD2
-clear_scenebuffer KEYWORD2
-add_threeD_line_to_scenebuffer  KEYWORD2
-add_polygon_to_scenebuffer  KEYWORD2
-render_scenebuffer  KEYWORD2
-check_collision_with_camera KEYWORD2
-render_left_justified_string KEYWORD2
-render_right_justified_string KEYWORD2
-render_centered_string KEYWORD2
-render_letter KEYWORD2
+begin	KEYWORD2
+begin_buffered	KEYWORD2
+end_buffered	KEYWORD2
+present	KEYWORD2
+set_refine	KEYWORD2
+set_sample_rate	KEYWORD2
+set_point_spacing	KEYWORD2
+frame_points	KEYWORD2
+frame_overflowed	KEYWORD2
+frame_rate	KEYWORD2
+line	KEYWORD2
+rectangle	KEYWORD2
+circle	KEYWORD2
+ellipse	KEYWORD2
+bezier_curve	KEYWORD2
+render_raster	KEYWORD2
+threeD_line	KEYWORD2
+polygon	KEYWORD2
+render_voxels	KEYWORD2
+clear_scenebuffer	KEYWORD2
+add_threeD_line_to_scenebuffer	KEYWORD2
+add_polygon_to_scenebuffer	KEYWORD2
+add_voxels_to_scenebuffer	KEYWORD2
+render_scenebuffer	KEYWORD2
+check_collision_with_camera	KEYWORD2
+render_left_justified_string	KEYWORD2
+render_right_justified_string	KEYWORD2
+render_centered_string	KEYWORD2
+render_letter	KEYWORD2
 
 #######################################
-# Constants (LITERAL1 = teal)
+# Constants (LITERAL1)
 #######################################
 
-FB_MAX_LINES  LITERAL1
-FB_MAX_POLYGONS LITERAL1
+FB_MAX_LINES	LITERAL1
+FB_MAX_POLYGONS	LITERAL1
+XY_DEFAULT_SAMPLE_RATE	LITERAL1
+XY_DEFAULT_MAX_POINTS	LITERAL1

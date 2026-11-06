@@ -1,10 +1,162 @@
 // XYdraw library source file
 // ESP32
 // Nemes Dániel
+//
+// Revamped output path (src_new):
+//  * DAC values are written straight to the RTC_IO pad registers instead of
+//    going through dacWrite() (which, in arduino-esp32 3.x, does a peripheral-
+//    manager lookup, argument checks and a spinlock on every single call).
+//  * Optional buffered mode: frames are built in RAM and replayed by a task on
+//    the other core at a constant point rate -> no flicker while the sketch
+//    computes, no bright "dwell" dots while the CPU is busy.
+//  * Primitives no longer call double-precision sin()/cos() per point and use
+//    fixed-point stepping for lines.
+//  * Camera trig in the 3D functions is cached instead of being recomputed for
+//    every line.
 
 
 #include <Arduino.h>
-#include <XYdraw.h>
+#include "XYdraw.h"
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_heap_caps.h"
+
+#if CONFIG_IDF_TARGET_ESP32
+  #include "soc/rtc_io_reg.h"
+  #define XY_HAS_FAST_DAC 1
+  #define XY_DAC_SHIFT    RTC_IO_PDAC1_DAC_S          // same (19) for both channels
+  #define XY_DAC_MASK     (0xFFUL << XY_DAC_SHIFT)
+#else
+  #define XY_HAS_FAST_DAC 0
+#endif
+
+static inline uint32_t xy_cycles() __attribute__((always_inline));
+static inline uint32_t xy_cycles() { return ESP.getCycleCount(); }
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Low-level output
+
+// Writes one X/Y pair to the DAC.  With the fast path this is two plain
+// 32-bit stores (no read-modify-write, no locking, no driver calls).
+inline void XYdraw::dac_out(uint8_t x, uint8_t y)
+{
+#if XY_HAS_FAST_DAC
+  if (_fast_dac)
+  {
+    *_x_reg = _x_base | ((uint32_t)x << XY_DAC_SHIFT);
+    *_y_reg = _y_base | ((uint32_t)y << XY_DAC_SHIFT);
+    return;
+  }
+#endif
+  dacWrite(_ch_x_pin, x);
+  dacWrite(_ch_y_pin, y);
+}
+
+// Every drawing primitive funnels its points through here.
+inline void XYdraw::emit(int x, int y)
+{
+  if (x < 0) x = 0; else if (x > 255) x = 255;
+  if (y < 0) y = 0; else if (y > 255) y = 255;
+
+  if (_buffered)
+  {
+    if (_need_wait) wait_for_swap();
+    if (_back_n < _cap) _back[_back_n++] = (uint16_t)(x | (y << 8));
+    else                _overflow = true;
+    return;
+  }
+
+  // Direct mode: optional pacing so the DAC gets time to settle and the
+  // brightness does not depend on how fast the CPU happens to be.
+  if (_cycles_per_point)
+  {
+    uint32_t now = xy_cycles();
+    if ((int32_t)(_next_cycle - now) > 0)
+    {
+      while ((int32_t)(_next_cycle - xy_cycles()) > 0) { }
+      now = _next_cycle;
+    }
+    _next_cycle = now + _cycles_per_point;
+  }
+  dac_out((uint8_t)x, (uint8_t)y);
+}
+
+// Plays a packed point list at the configured rate (used by the unicore
+// fallback of buffered mode).
+void XYdraw::play_points(const uint16_t* pts, uint32_t n)
+{
+  const uint32_t cpp  = _cycles_per_point;
+  uint32_t       next = xy_cycles();
+  for (uint32_t i = 0; i < n; i++)
+  {
+    uint16_t p = pts[i];
+    if (cpp)
+    {
+      while ((int32_t)(next - xy_cycles()) > 0) { }
+      next += cpp;
+    }
+    dac_out((uint8_t)(p & 0xFF), (uint8_t)(p >> 8));
+  }
+}
+
+// Background replay task (buffered mode, dual-core chips).
+// Never blocks: it owns its core and loops the front buffer forever,
+// switching to a newly presented frame only at the end of a pass so the
+// image never tears.
+void XYdraw::output_task(void* arg)
+{
+  XYdraw* d = (XYdraw*)arg;
+  const uint16_t* buf = nullptr;
+  uint32_t        n   = 0;
+
+  for (;;)
+  {
+    if (d->_swap_req)
+    {
+      buf = d->_pending_buf;
+      n   = d->_pending_n;
+      d->_shown_n = n;
+      __sync_synchronize();
+      d->_swap_req = false;   // old front buffer is now free for the sketch
+    }
+
+    if (n == 0) continue;     // nothing to show yet
+
+    const uint32_t cpp  = d->_cycles_per_point;
+    uint32_t       next = xy_cycles();
+    for (uint32_t i = 0; i < n; i++)
+    {
+      uint16_t p = buf[i];
+      if (cpp)
+      {
+        uint32_t now;
+        while ((int32_t)(next - (now = xy_cycles())) > 0) { }
+        // If we got preempted (WiFi, flash access...), resync instead of
+        // bursting through the backlog at full speed.
+        if ((int32_t)(now - next) > (int32_t)(cpp * 16)) next = now;
+        next += cpp;
+      }
+      d->dac_out((uint8_t)(p & 0xFF), (uint8_t)(p >> 8));
+    }
+  }
+}
+
+void XYdraw::wait_for_swap()
+{
+  while (_swap_req) { }      // at most one frame period
+  __sync_synchronize();
+  _need_wait = false;
+}
+
+void XYdraw::update_cycles_per_point()
+{
+  if (_sample_rate == 0) { _cycles_per_point = 0; return; }
+  uint32_t cpu_hz = getCpuFrequencyMhz() * 1000000UL;
+  uint32_t cpp    = cpu_hz / _sample_rate;
+  _cycles_per_point = cpp ? cpp : 1;
+}
 
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -13,7 +165,7 @@
 // Constructor funciton
 XYdraw::XYdraw(int ch_x_pin, int ch_y_pin, unsigned int refine)
 {
-  _refine = refine;
+  _refine = refine ? refine : 1;
   _ch_x_pin = ch_x_pin;
   _ch_y_pin = ch_y_pin;
   _fb_line_count = 0;
@@ -21,13 +173,162 @@ XYdraw::XYdraw(int ch_x_pin, int ch_y_pin, unsigned int refine)
   _cam_x = 0;
   _cam_y = 0;
   _cam_z = 0;
+
+  _fast_dac = false;
+  _x_reg = _y_reg = nullptr;
+  _x_base = _y_base = 0;
+  _sample_rate = XY_DEFAULT_SAMPLE_RATE;
+  _cycles_per_point = 0;
+  _next_cycle = 0;
+  _point_spacing = 0.0f;
+
+  _buffered = false;
+  _buf[0] = _buf[1] = nullptr;
+  _cap = 0;
+  _back = nullptr;
+  _back_n = 0;
+  _overflow = false;
+  _need_wait = false;
+  _pending_buf = nullptr;
+  _pending_n = 0;
+  _swap_req = false;
+  _shown_n = 0;
+  _task = nullptr;
+  _last_frame_points = 0;
+  _last_frame_overflow = false;
+
+  _trig_valid = false;
+  _trig_ax = _trig_ay = _trig_az = 0;
+  _t_cp = _t_cy = _t_cr = 1.0f;
+  _t_sp = _t_sy = _t_sr = 0.0f;
 }
 
-// Initializer function
+// Initializer function (direct mode)
 void XYdraw::begin()
 {
-  pinMode(_ch_x_pin, OUTPUT);
-  pinMode(_ch_y_pin, OUTPUT);
+  // Let the core configure the DAC pads once (power-up, RTC mux, cosine
+  // generator off).  After that we only touch the value field ourselves.
+  dacWrite(_ch_x_pin, 128);
+  dacWrite(_ch_y_pin, 128);
+
+#if XY_HAS_FAST_DAC
+  auto reg_for = [](int pin) -> volatile uint32_t*
+  {
+    if (pin == DAC1) return (volatile uint32_t*)RTC_IO_PAD_DAC1_REG;
+    if (pin == DAC2) return (volatile uint32_t*)RTC_IO_PAD_DAC2_REG;
+    return nullptr;
+  };
+  _x_reg = reg_for(_ch_x_pin);
+  _y_reg = reg_for(_ch_y_pin);
+  if (_x_reg && _y_reg)
+  {
+    _x_base   = *_x_reg & ~XY_DAC_MASK;
+    _y_base   = *_y_reg & ~XY_DAC_MASK;
+    _fast_dac = true;
+  }
+#endif
+
+  update_cycles_per_point();
+  _next_cycle = xy_cycles();
+}
+
+bool XYdraw::begin_buffered(uint32_t max_points, uint32_t sample_rate)
+{
+  end_buffered();
+  _sample_rate = sample_rate;
+  begin();
+
+  if (max_points == 0) max_points = 1;
+  _buf[0] = (uint16_t*)heap_caps_malloc(max_points * sizeof(uint16_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  _buf[1] = (uint16_t*)heap_caps_malloc(max_points * sizeof(uint16_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (!_buf[0] || !_buf[1])
+  {
+    free(_buf[0]); free(_buf[1]);
+    _buf[0] = _buf[1] = nullptr;
+    return false;
+  }
+
+  _cap       = max_points;
+  _back      = _buf[0];
+  _back_n    = 0;
+  _overflow  = false;
+  _need_wait = false;
+  _swap_req  = false;
+  _pending_n = 0;
+  _shown_n   = 0;
+  _buffered  = true;
+
+#if !CONFIG_FREERTOS_UNICORE
+  // Run the replay loop on the core the sketch is NOT running on.
+  BaseType_t other_core = (xPortGetCoreID() == 0) ? 1 : 0;
+
+  // The replay task never yields, so that core's idle task can't feed the
+  // task watchdog any more.
+  if (other_core == 0) disableCore0WDT();
+  else                 disableCore1WDT();
+
+  TaskHandle_t h = nullptr;
+  if (xTaskCreatePinnedToCore(output_task, "XYdraw_out", 2048, this, 2, &h, other_core) != pdPASS)
+  {
+    free(_buf[0]); free(_buf[1]);
+    _buf[0] = _buf[1] = nullptr;
+    _buffered = false;
+    return false;
+  }
+  _task = (void*)h;
+#endif
+  return true;
+}
+
+void XYdraw::end_buffered()
+{
+  if (!_buffered) return;
+#if !CONFIG_FREERTOS_UNICORE
+  if (_task) { vTaskDelete((TaskHandle_t)_task); _task = nullptr; }
+#endif
+  _buffered = false;
+  free(_buf[0]); free(_buf[1]);
+  _buf[0] = _buf[1] = nullptr;
+  _back = nullptr;
+  _back_n = _cap = 0;
+}
+
+void XYdraw::present()
+{
+  if (!_buffered) return;
+
+  _last_frame_points   = _back_n;
+  _last_frame_overflow = _overflow;
+  _overflow            = false;
+
+#if CONFIG_FREERTOS_UNICORE
+  // Single core: no background replay possible, play the frame once now.
+  _shown_n = _back_n;
+  play_points(_back, _back_n);
+  _back_n = 0;
+#else
+  if (_need_wait) wait_for_swap();       // previous hand-off must be consumed
+
+  _pending_buf = _back;
+  _pending_n   = _back_n;
+  __sync_synchronize();
+  _swap_req    = true;
+
+  // The buffer currently on screen becomes our next back buffer — but the
+  // task keeps reading it until it finishes its pass, so the first emit()
+  // of the next frame waits for the swap (this is the vsync).  Anything the
+  // sketch does before drawing (physics, input, projection setup) overlaps
+  // with the replay.
+  _back      = (_back == _buf[0]) ? _buf[1] : _buf[0];
+  _back_n    = 0;
+  _need_wait = true;
+#endif
+}
+
+float XYdraw::frame_rate() const
+{
+  if (!_buffered || _shown_n == 0 || _sample_rate == 0) return 0.0f;
+  return (float)_sample_rate / (float)_shown_n;
 }
 
 // Set the quality of splines
@@ -37,28 +338,64 @@ void XYdraw::set_refine(unsigned int refine)
   _refine = refine;
 }
 
+void XYdraw::set_sample_rate(uint32_t points_per_second)
+{
+  _sample_rate = points_per_second;
+  update_cycles_per_point();
+}
+
+void XYdraw::set_point_spacing(float spacing)
+{
+  _point_spacing = (spacing > 0.0f) ? spacing : 0.0f;
+}
+
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // 2D rendering functions
 
 // draws a line from 4 coordinates
 void XYdraw::line(int start_x, int start_y, int end_x, int end_y)
 {
-  for (int i = 0; i <= _refine; i++)
+  int dx = end_x - start_x;
+  int dy = end_y - start_y;
+
+  int steps;
+  if (_point_spacing > 0.0f)
   {
-    float t = (float)i / (float)_refine;
-    
-    // Linear interpolation between the start and end points
-    float x = start_x + t * (end_x - start_x);
-    float y = start_y + t * (end_y - start_y);
+    int len = max(abs(dx), abs(dy));                 // Chebyshev length is enough here
+    steps = (int)((float)len / _point_spacing + 0.999f);
+    if (steps < 1) steps = 1;
+  }
+  else
+  {
+    steps = _refine;
+  }
 
-    // Ensure values are within the DAC range (0-255)
-    int dac_x = constrain((int)x, 0, 255);
-    int dac_y = constrain((int)y, 0, 255);
+  // 16.16 fixed-point stepping: no float division / multiply per point.
+  if (abs(start_x) < 16384 && abs(start_y) < 16384 && abs(dx) < 16384 && abs(dy) < 16384)
+  {
+    int32_t fx  = (int32_t)start_x << 16;
+    int32_t fy  = (int32_t)start_y << 16;
+    int32_t sx  = (int32_t)(((int64_t)dx << 16) / steps);
+    int32_t sy  = (int32_t)(((int64_t)dy << 16) / steps);
+    for (int i = 0; i < steps; i++)
+    {
+      emit(fx >> 16, fy >> 16);
+      fx += sx;
+      fy += sy;
+    }
+    emit(end_x, end_y);                              // exact end point
+    return;
+  }
 
-    dacWrite(_ch_x_pin, dac_x);
-    dacWrite(_ch_y_pin, dac_y);
-
-    // delay(1); // Small delay to ensure DAC output stabilization
+  // Huge coordinates: float fallback (same math as the original).
+  float inv = 1.0f / (float)steps;
+  for (int i = 0; i <= steps; i++)
+  {
+    float t = (float)i * inv;
+    float x = start_x + t * dx;
+    float y = start_y + t * dy;
+    emit(x < 0.0f ? 0 : (x > 255.0f ? 255 : (int)x),
+         y < 0.0f ? 0 : (y > 255.0f ? 255 : (int)y));
   }
 }
 
@@ -71,50 +408,68 @@ void XYdraw::rectangle(int x, int y, int x_length, int y_length)
   line(x, y + y_length, x, y);
 }
 
+// Shared by circle() and ellipse().  Walks the unit circle with an
+// incremental rotation, so there is only one sinf/cosf pair per call
+// instead of a double-precision sin() and cos() for every point.
+static inline void xy_ellipse_steps(int refine, float& c, float& s)
+{
+  float step = 6.2831853f / (float)refine;
+  c = cosf(step);
+  s = sinf(step);
+}
+
 // draws a circle from 2 coordinates and a radius
 void XYdraw::circle(int origin_x, int origin_y, int radius)
 {
-  for (float i = 0; i < 360.0; i += 360.0 / (float)_refine)
-  {
-    dacWrite(_ch_x_pin, constrain((int)(origin_x + sin(radians(i)) * radius), 0, 255));
-    dacWrite(_ch_y_pin, constrain((int)(origin_y + cos(radians(i)) * radius), 0, 255));
-  }
-  // delay(1);
+  ellipse(origin_x, origin_y, radius, radius);
 }
 
 // draws an ellipse from 2 coordinates and two radii
 void XYdraw::ellipse(int origin_x, int origin_y, int radius_x, int radius_y)
 {
-  // Iterate through angles from 0 to 360 degrees
-  for (float i = 0; i < 360.0; i += 360.0 / (float)_refine)
+  int n = _refine;
+  if (_point_spacing > 0.0f)
   {
-    // Calculate x and y positions based on ellipse parametric equations
-    int x = origin_x + (radius_x * sin(radians(i)));
-    int y = origin_y + (radius_y * cos(radians(i)));
-
-    // Ensure values are within the DAC range (0-255)
-    int dac_x = constrain((int)x, 0, 255);
-    int dac_y = constrain((int)y, 0, 255);
-
-    dacWrite(_ch_x_pin, dac_x);
-    dacWrite(_ch_y_pin, dac_y);
+    // Approximate perimeter (Ramanujan-lite) / spacing, min 8 points.
+    float a = fabsf((float)radius_x), b = fabsf((float)radius_y);
+    float perim = 3.1415927f * (3.0f * (a + b) - sqrtf((3.0f * a + b) * (a + 3.0f * b)));
+    n = (int)(perim / _point_spacing + 0.999f);
+    if (n < 8) n = 8;
   }
-  // delay(1);
+
+  float c, s;
+  xy_ellipse_steps(n, c, s);
+
+  float u = 0.0f;   // sin(angle)
+  float v = 1.0f;   // cos(angle)
+  float ox = (float)origin_x, oy = (float)origin_y;
+  float rx = (float)radius_x, ry = (float)radius_y;
+
+  for (int i = 0; i < n; i++)
+  {
+    emit((int)(ox + u * rx), (int)(oy + v * ry));
+    float nu = u * c + v * s;
+    float nv = v * c - u * s;
+    u = nu;
+    v = nv;
+  }
 }
 
 // Renders an array in raster format
 void XYdraw::render_raster(bool raster[], unsigned int x_size, unsigned int y_size)
 {
-  int temporaryRefine = _refine;
+  int   temporaryRefine  = _refine;
+  float temporarySpacing = _point_spacing;
   _refine = 2;
+  _point_spacing = 0.0f;
 
-  float x_scale = 255.00 / x_size;
-  float y_scale = 255.00 / y_size;
+  float x_scale = 255.00f / x_size;
+  float y_scale = 255.00f / y_size;
 
   int i = 0;
-  for (int y = 0; y < y_size; y++)
+  for (unsigned int y = 0; y < y_size; y++)
   {
-    for (int x = 0; x < x_size; x++)
+    for (unsigned int x = 0; x < x_size; x++)
     {
       if (raster[i] == 1)
       {
@@ -125,42 +480,65 @@ void XYdraw::render_raster(bool raster[], unsigned int x_size, unsigned int y_si
   }
 
   _refine = temporaryRefine;
+  _point_spacing = temporarySpacing;
 }
 
 // draws a bézier curve from 4 control point coordinates
 void XYdraw::bezier_curve(int anchor1_x, int anchor1_y, int anchor2_x, int anchor2_y, int cp1_x, int cp1_y, int cp2_x, int cp2_y)
 {
-  for (int i = 0; i <= _refine; i++)
+  int n = _refine;
+  if (_point_spacing > 0.0f)
   {
-    float t = (float)i / (float)_refine;
-
-    // Linear interpolations for the first level
-    float x0 = (1 - t) * anchor1_x + t * cp1_x;
-    float y0 = (1 - t) * anchor1_y + t * cp1_y;
-    float x1 = (1 - t) * cp1_x + t * cp2_x;
-    float y1 = (1 - t) * cp1_y + t * cp2_y;
-    float x2 = (1 - t) * cp2_x + t * anchor2_x;
-    float y2 = (1 - t) * cp2_y + t * anchor2_y;
-
-    // Linear interpolations for the second level
-    float x3 = (1 - t) * x0 + t * x1;
-    float y3 = (1 - t) * y0 + t * y1;
-    float x4 = (1 - t) * x1 + t * x2;
-    float y4 = (1 - t) * y1 + t * y2;
-
-    // Linear interpolation for the third level
-    float x = (1 - t) * x3 + t * x4;
-    float y = (1 - t) * y3 + t * y4;
-
-    // Ensure values are within the DAC range (0-255)
-    int dac_x = constrain((int)x, 0, 255);
-    int dac_y = constrain((int)y, 0, 255);
-
-    dacWrite(_ch_x_pin, dac_x);
-    dacWrite(_ch_y_pin, dac_y);
-
-    // delay(1); // Small delay to ensure DAC output stabilization
+    // Control-polygon length is an upper bound of the curve length.
+    float l = sqrtf((float)((cp1_x - anchor1_x) * (cp1_x - anchor1_x) + (cp1_y - anchor1_y) * (cp1_y - anchor1_y)))
+            + sqrtf((float)((cp2_x - cp1_x)     * (cp2_x - cp1_x)     + (cp2_y - cp1_y)     * (cp2_y - cp1_y)))
+            + sqrtf((float)((anchor2_x - cp2_x) * (anchor2_x - cp2_x) + (anchor2_y - cp2_y) * (anchor2_y - cp2_y)));
+    n = (int)(l / _point_spacing + 0.999f);
+    if (n < 2) n = 2;
   }
+
+  // Polynomial form B(t) = a t^3 + b t^2 + c t + p0, evaluated by forward
+  // differencing: three additions per axis per point.
+  float h  = 1.0f / (float)n;
+  float h2 = h * h, h3 = h2 * h;
+
+  float ax = -anchor1_x + 3.0f * cp1_x - 3.0f * cp2_x + anchor2_x;
+  float ay = -anchor1_y + 3.0f * cp1_y - 3.0f * cp2_y + anchor2_y;
+  float bx = 3.0f * anchor1_x - 6.0f * cp1_x + 3.0f * cp2_x;
+  float by = 3.0f * anchor1_y - 6.0f * cp1_y + 3.0f * cp2_y;
+  float cx = -3.0f * anchor1_x + 3.0f * cp1_x;
+  float cy = -3.0f * anchor1_y + 3.0f * cp1_y;
+
+  float x = (float)anchor1_x, y = (float)anchor1_y;
+  float d1x = ax * h3 + bx * h2 + cx * h,  d1y = ay * h3 + by * h2 + cy * h;
+  float d2x = 6.0f * ax * h3 + 2.0f * bx * h2,  d2y = 6.0f * ay * h3 + 2.0f * by * h2;
+  float d3x = 6.0f * ax * h3,  d3y = 6.0f * ay * h3;
+
+  for (int i = 0; i < n; i++)
+  {
+    emit((int)x, (int)y);
+    x += d1x;  d1x += d2x;  d2x += d3x;
+    y += d1y;  d1y += d2y;  d2y += d3y;
+  }
+  emit(anchor2_x, anchor2_y);                        // exact end point
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Camera trig cache
+
+void XYdraw::cam_trig(int cam_x_dir, int cam_y_dir, int cam_z_dir)
+{
+  if (_trig_valid && cam_x_dir == _trig_ax && cam_y_dir == _trig_ay && cam_z_dir == _trig_az)
+    return;
+  const float D2R = 0.017453293f;
+  float pitch = (float)cam_x_dir * D2R;
+  float yaw   = (float)cam_y_dir * D2R;
+  float roll  = (float)cam_z_dir * D2R;
+  _t_cp = cosf(pitch);  _t_sp = sinf(pitch);
+  _t_cy = cosf(yaw);    _t_sy = sinf(yaw);
+  _t_cr = cosf(roll);   _t_sr = sinf(roll);
+  _trig_ax = cam_x_dir;  _trig_ay = cam_y_dir;  _trig_az = cam_z_dir;
+  _trig_valid = true;
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -249,13 +627,12 @@ void XYdraw::threeD_line(int start_x,   int start_y,   int start_z,
   //   5. Clip projected line to screen bounds with Liang–Barsky and draw.
 
   // ── Precompute trig for each rotation angle ──────────────────────────────
-  float pitch = radians((float)cam_x_dir);
-  float yaw   = radians((float)cam_y_dir);
-  float roll  = radians((float)cam_z_dir);
-
-  float cp = cos(pitch), sp = sin(pitch);  // pitch (X)
-  float cy = cos(yaw),   sy = sin(yaw);    // yaw   (Y)
-  float cr = cos(roll),  sr = sin(roll);   // roll  (Z)
+  // Cached: only recomputed when the camera angles change, so rendering
+  // hundreds of lines with the same camera costs one set of sinf/cosf.
+  cam_trig(cam_x_dir, cam_y_dir, cam_z_dir);
+  const float cp = _t_cp, sp = _t_sp;  // pitch (X)
+  const float cy = _t_cy, sy = _t_sy;  // yaw   (Y)
+  const float cr = _t_cr, sr = _t_sr;  // roll  (Z)
 
   // ── Helper: world point → camera-space point ─────────────────────────────
   // Camera orientation C = Ry(yaw)·Rx(pitch)·Rz(roll)  (FPS intrinsic YXZ).
@@ -545,13 +922,10 @@ void XYdraw::render_scenebuffer(int cam_x,     int cam_y,     int cam_z,
   const int   T_CAP     = FB_MAX_POLYGONS * 6 + 2;
 
   // ── Camera trig ────────────────────────────────────────────────────────────
-  float pitch = radians((float)cam_x_dir);
-  float yaw   = radians((float)cam_y_dir);
-  float roll  = radians((float)cam_z_dir);
-
-  float cp = cosf(pitch), sp = sinf(pitch);
-  float cosy = cosf(yaw),  siny = sinf(yaw);
-  float cr = cosf(roll),   sr = sinf(roll);
+  cam_trig(cam_x_dir, cam_y_dir, cam_z_dir);
+  const float cp   = _t_cp, sp   = _t_sp;
+  const float cosy = _t_cy, siny = _t_sy;
+  const float cr   = _t_cr, sr   = _t_sr;
 
   // ── World → camera-space (mirrors threeD_line exactly) ────────────────────
   auto to_cam = [=](float wx, float wy, float wz,

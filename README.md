@@ -8,6 +8,8 @@ XYdraw drives an oscilloscope as a vector display by continuously outputting X/Y
 
 ## Features
 
+- **Fast DAC output** — writes the DAC registers directly instead of calling `dacWrite()`, with a configurable point rate
+- **Flicker-free buffered mode** — frames are built in RAM and replayed continuously from the second CPU core, so the image stays steady while your sketch computes the next frame
 - **2D primitives** — lines, rectangles, circles, ellipses, cubic Bézier curves
 - **Raster rendering** — display any pixel grid as a vector image
 - **3D wireframe rendering** — perspective projection with full pitch/yaw/roll camera control
@@ -97,7 +99,30 @@ void loop()
 }
 ```
 
-The screen refreshes continuously as long as `loop()` keeps calling drawing functions. There is no frame buffer — each call to a drawing function immediately outputs DAC values.
+In this default **direct mode**, the screen refreshes as long as `loop()` keeps calling drawing functions — each call immediately outputs DAC values.
+
+For complex scenes, use **buffered mode** instead: draw the frame, then call `present()`. The finished frame keeps being redrawn in the background, so the scope never flickers, even when a frame takes a long time to compute.
+
+```cpp
+#include <XYdraw.h>
+
+XYdraw draw(25, 26, 50);
+
+void setup()
+{
+  draw.begin_buffered();   // instead of draw.begin()
+}
+
+void loop()
+{
+  draw.line(0, 0, 255, 255);
+  draw.circle(128, 128, 60);
+
+  draw.present();          // publish the frame
+}
+```
+
+See [Output Modes](#output-modes) for details.
 
 ---
 
@@ -125,12 +150,44 @@ Creates the drawing object. `x_pin` and `y_pin` must be DAC-capable GPIO pins (2
 ```cpp
 void begin();
 ```
-Initialises the DAC pins. Call once in `setup()`.
+Initialises the DAC pins in **direct mode**. Call once in `setup()`.
+
+```cpp
+bool begin_buffered(uint32_t max_points = 16384, uint32_t sample_rate = 1000000);
+```
+Initialises the DAC pins in **buffered mode** (call instead of `begin()`). `max_points` is the largest number of points one frame can hold; two buffers of `max_points × 2` bytes are allocated. `sample_rate` is the playback rate in points per second. Returns `false` if the buffers or the output task could not be created; the library then stays in direct mode.
+
+```cpp
+void present();
+```
+Buffered mode only (does nothing in direct mode). Publishes the frame drawn since the last `present()`. The new frame appears once the current one has finished playing, so the image never tears. The next drawing call waits for that switch, which keeps your sketch in step with the display.
+
+```cpp
+void end_buffered();
+```
+Stops the output task, frees the buffers and returns to direct mode.
 
 ```cpp
 void set_refine(unsigned int refine);
 ```
 Changes the interpolation quality at runtime. A value of 0 is silently clamped to 1.
+
+```cpp
+void set_sample_rate(uint32_t points_per_second);
+```
+Sets the point rate. In direct mode it is an upper limit (`0` = as fast as the CPU can go); in buffered mode it is the exact playback rate. Default: 1 000 000.
+
+```cpp
+void set_point_spacing(float spacing);
+```
+Chooses how lines, circles, ellipses and Bézier curves are sampled. `0` (the default) keeps the classic behaviour, where every shape gets a fixed number of points set by `refine`. A value above 0 places one point every `spacing` DAC units instead, so short strokes (text, small details, occlusion sub-segments) cost far fewer points and everything is drawn with the same brightness. Typical values are 2.0–6.0. `render_raster` is not affected.
+
+```cpp
+uint32_t frame_points();
+bool     frame_overflowed();
+float    frame_rate();
+```
+Buffered-mode statistics: the number of points in the last presented frame, whether points had to be dropped because the frame exceeded `max_points`, and the refresh rate the oscilloscope is currently seeing (Hz).
 
 ---
 
@@ -317,6 +374,29 @@ Renders a single character. `offset` is added to `x` before drawing, allowing yo
 
 ---
 
+## Output Modes
+
+### Direct mode — `begin()`
+
+Every drawing call writes to the DAC immediately, exactly like earlier versions of the library. Existing sketches work unchanged. Points are written straight to the DAC registers, at most `sample_rate` points per second.
+
+The downside: the beam only moves while drawing functions run. While your sketch is busy with other work (game logic, 3D projection, occlusion), the beam stands still, which shows up as bright dots and, once a frame takes longer than the scope's persistence, as flicker.
+
+### Buffered mode — `begin_buffered()` + `present()`
+
+Drawing calls store points in a back buffer instead. `present()` hands the finished frame to a background task running on the **other CPU core**, which replays it to the DAC over and over at a constant `sample_rate`. While it does, your sketch builds the next frame.
+
+- No flicker, no dwell dots, even brightness across the whole frame.
+- Refresh rate = `sample_rate / points per frame`. For example, 20 000 points at 1 000 000 points/s refresh at 50 Hz. Check it with `frame_rate()`.
+- If a frame needs more than `max_points`, the extra points are dropped and `frame_overflowed()` returns `true`. Raise `max_points` or reduce detail.
+
+**Things to know about buffered mode:**
+- The output task occupies a whole CPU core (usually core 0) and never yields, so the library turns off that core's idle watchdog.
+- WiFi and Bluetooth also run on core 0 and will briefly interrupt the replay, which can cause small glitches.
+- On single-core chips, `present()` plays the frame once, synchronously, instead of replaying it in the background.
+
+---
+
 ## The `refine` Parameter
 
 `refine` controls the number of intermediate points the library outputs when drawing curves and lines. More points means a smoother, brighter trace at the cost of drawing time.
@@ -331,6 +411,8 @@ Renders a single character. `offset` is added to `x` before drawing, allowing yo
 | 3D functions  | Applied to each projected line segment                 |
 
 `render_raster` temporarily overrides `refine` to 2 internally and restores it afterwards.
+
+When `set_point_spacing()` is set above 0, `refine` no longer affects lines, circles, ellipses or Bézier curves — their point count follows their length instead.
 
 **Starting values:** 20–50 works well for most scenes. Higher than 100 gives diminishing returns and noticeably slows the frame rate.
 
@@ -360,25 +442,29 @@ Increasing these raises RAM usage slightly (both values are stored as compact `i
 | `bezier_curve` | Animated Bézier curves with changing anchors and control points; effect of `refine` |
 | `raster` | Displaying a 10×10 pixel smiley face via a boolean matrix |
 | `regular_3D_rendering` | Wireframe cube with a pyramid roof, camera orbiting in 3D |
-| `render_voxels` | Wireframe voxel grid — a small 3D bitmap rendered as wireframe cubes |
+| `regular_voxel_rendering` | Wireframe voxel grid — a small 3D bitmap rendered as wireframe cubes |
 | `scenebuffered_occlusion_3D_rendering` | Same cube, but solid-faced with hidden-line removal |
-| `add_voxels_to_scenebuffer` | Solid voxel object with full hidden-face removal via the scene buffer |
+| `scenebuffered_occlusion_voxel_rendering` | Solid voxel object with full hidden-face removal via the scene buffer |
 | `string_rendering` | Left/right/center justified strings animating letter by letter |
+| `characters` | The full vector font |
+| `buffered_mode` | Flicker-free buffered output with `present()`, point spacing and frame statistics |
 
 ---
 
 ## Performance Notes
 
-- The ESP32 DAC update rate limits the maximum detail and frame rate simultaneously. For a stable, bright trace, keep the total number of DAC writes per frame below roughly 2 000–4 000 (tune by eye with your oscilloscope's persistence setting).
-- Each `line()` call costs `refine + 1` DAC writes. Each `circle()` or `ellipse()` costs `refine` writes. Each `bezier_curve()` costs `refine + 1` writes.
-- Scene-buffered rendering with occlusion has O(L × P) complexity per frame, where L is the number of line sub-segments and P is the number of projected polygons. For complex scenes, reduce `refine` before increasing `FB_MAX_POLYGONS`.
+- Detail and refresh rate trade off against each other: refresh rate ≈ `sample_rate / points per frame`. Aim for at least 30–50 Hz for a steady image. At the default 1 000 000 points/s that is roughly 20 000–30 000 points per frame.
+- With `set_point_spacing(0)` (default), each `line()` call costs `refine + 1` points, each `circle()` or `ellipse()` costs `refine` points and each `bezier_curve()` costs `refine + 1` points. With a spacing above 0 the cost follows the shape's length.
+- If corners look rounded or lines look shorter than they should, the DAC isn't settling between points — lower `set_sample_rate()` (e.g. 500 000).
+- For complex or computation-heavy scenes, use buffered mode: computation time then lowers your animation rate instead of causing flicker.
+- Scene-buffered rendering with occlusion has O(L × P) complexity per frame, where L is the number of line sub-segments and P is the number of projected polygons. For complex scenes, reduce `refine` (or use `set_point_spacing()`) before increasing `FB_MAX_POLYGONS`.
 - The `delay()` calls in the example sketches are there for visual effect only — they slow animation so individual frames are visible on the scope. Remove them in production code to maximise brightness.
 
 ---
 
 ## Limitations
 
-- **ESP32 only.** The library calls `dacWrite()`, which is specific to the ESP32 Arduino core. It is not compatible with other Arduino boards.
+- **ESP32 only.** The library needs the ESP32's built-in DAC. On the original ESP32 it writes the DAC registers directly; on other DAC-equipped variants it falls back to the slower `dacWrite()`. It is not compatible with other Arduino boards or ESP32 variants without a DAC (e.g. ESP32-S3, C3).
 - **Monochrome output.** The oscilloscope beam has a single intensity; there is no colour or brightness control from software.
 - **No filled polygons.** The renderer draws outlines only. Solid fills would require a different display technique (e.g. raster scanning).
 - **Integer world coordinates.** The 3D functions accept `int` coordinates. For very fine geometry, scale your world up.

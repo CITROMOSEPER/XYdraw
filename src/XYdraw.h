@@ -16,6 +16,14 @@
 #define FB_MAX_LINES    255
 #define FB_MAX_POLYGONS 255
 
+// ── Output defaults ──────────────────────────────────────────────────────────
+// Default point rate in points (X+Y pairs) per second.  The ESP32 DAC itself
+// can't usefully settle much faster than ~1 MHz into a scope cable; if corners
+// look rounded or lines look shortened, lower it with set_sample_rate().
+#define XY_DEFAULT_SAMPLE_RATE  1000000UL
+// Default buffered-mode capacity (points per frame).  2 bytes per point, x2 buffers.
+#define XY_DEFAULT_MAX_POINTS   16384UL
+
 
 class XYdraw
 {
@@ -24,8 +32,41 @@ class XYdraw
     // Setup functions
 
     XYdraw(int ch_x_pin, int ch_y_pin, unsigned int refine);
+
+    // Immediate (direct) mode — same behaviour as the original library: every
+    // drawing call writes to the DAC right away.  Uses direct register writes
+    // instead of dacWrite(), so each point is several times cheaper.
     void begin();
+
+    // Buffered mode — drawing calls append points to a back buffer; present()
+    // hands the finished frame to a background task on the other CPU core,
+    // which replays it to the DAC continuously at a fixed point rate.
+    // The scope image therefore never flickers while the sketch is busy
+    // computing the next frame, and brightness is even across the frame.
+    // Call present() once at the end of every frame.
+    // Returns false if the buffers could not be allocated (falls back to direct mode).
+    bool begin_buffered(uint32_t max_points  = XY_DEFAULT_MAX_POINTS,
+                        uint32_t sample_rate = XY_DEFAULT_SAMPLE_RATE);
+    void end_buffered();     // stop the output task, free buffers, return to direct mode
+    void present();          // buffered mode: publish the current frame (no-op in direct mode)
+
     void set_refine(unsigned int refine);
+
+    // Point rate in points per second.  Direct mode: upper limit (0 = as fast
+    // as the CPU can go).  Buffered mode: exact playback rate.
+    void set_sample_rate(uint32_t points_per_second);
+
+    // Line sampling.  0 (default) = original behaviour: every line gets
+    // refine + 1 points regardless of length.  > 0 = adaptive: a line gets one
+    // point every `spacing` DAC units (min. 2 points), so short lines (font
+    // strokes, occlusion sub-segments, raster pixels) cost far fewer points and
+    // all lines have the same brightness.  Typical values: 2.0 – 6.0.
+    void set_point_spacing(float spacing);
+
+    // Buffered-mode statistics for the most recently presented frame.
+    uint32_t frame_points() const   { return _last_frame_points; }
+    bool     frame_overflowed() const { return _last_frame_overflow; }  // true = points were dropped (raise max_points)
+    float    frame_rate() const;    // refresh rate the scope is actually seeing (Hz)
 
     /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // 2D rendering functions
@@ -102,6 +143,50 @@ class XYdraw
     int _cam_x;
     int _cam_y;
     int _cam_z;
+
+    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // Fast DAC output state
+
+    // Emits one point (clamped to 0..255) to the DAC or to the back buffer.
+    inline void emit(int x, int y) __attribute__((always_inline));
+    inline void dac_out(uint8_t x, uint8_t y) __attribute__((always_inline));
+    void play_points(const uint16_t* pts, uint32_t n);   // paced playback (direct / unicore)
+    void wait_for_swap();
+    void update_cycles_per_point();
+    void cam_trig(int cam_x_dir, int cam_y_dir, int cam_z_dir);
+    static void output_task(void* arg);
+
+    bool              _fast_dac;        // true = direct register writes available
+    volatile uint32_t* _x_reg;
+    volatile uint32_t* _y_reg;
+    uint32_t          _x_base;          // register contents with the value field cleared
+    uint32_t          _y_base;
+
+    uint32_t          _sample_rate;
+    uint32_t          _cycles_per_point; // 0 = unpaced
+    uint32_t          _next_cycle;       // direct-mode pacing deadline
+    float             _point_spacing;
+
+    // Buffered mode
+    bool              _buffered;
+    uint16_t*         _buf[2];
+    uint32_t          _cap;
+    uint16_t*         _back;
+    uint32_t          _back_n;
+    bool              _overflow;
+    bool              _need_wait;
+    uint16_t* volatile _pending_buf;
+    volatile uint32_t  _pending_n;
+    volatile bool      _swap_req;
+    volatile uint32_t  _shown_n;         // points in the frame the task is currently replaying
+    void*             _task;             // TaskHandle_t
+    uint32_t          _last_frame_points;
+    bool              _last_frame_overflow;
+
+    // Cached camera trig (recomputed only when the angles change)
+    bool  _trig_valid;
+    int   _trig_ax, _trig_ay, _trig_az;
+    float _t_cp, _t_sp, _t_cy, _t_sy, _t_cr, _t_sr;
 
     /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // scenebuffer storage
